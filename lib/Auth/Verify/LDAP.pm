@@ -7,7 +7,7 @@
 
 package Bugzilla::Extension::LDAPGroups::Auth::Verify::LDAP;
 use strict;
-use base qw(Bugzilla::Auth::Verify::LDAP);
+use parent qw(Bugzilla::Auth::Verify::LDAP);
 
 use Bugzilla::Error qw(ThrowCodeError);
 
