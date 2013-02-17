@@ -1,10 +1,9 @@
 LDAPGroups
 ==========
 
-Bugzilla extension to enable LDAP groups and Bugzilla groups mapping.
+Bugzilla extension to map Bugzilla and LDAP groups.
 
-How to install/How it works
----------------------------
+## Installation
 
 1. Copy the LDAPGroups/ to the Bugzilla extensions directory and run the checksetup.pl script.
 2. You must be using LDAP as one of the user_verify_class options.
