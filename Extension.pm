@@ -13,7 +13,8 @@ use parent qw(Bugzilla::Extension);
 
 use Bugzilla::Extension::LDAPGroups::Util;
 
-use Bugzilla::Util qw(diff_arrays);
+use Bugzilla::Error qw(ThrowUserError);
+use Bugzilla::Util qw(diff_arrays trim clean_text);
 
 use constant GRANT_LDAP => 3;
 
@@ -22,6 +23,7 @@ our $VERSION = '0.01';
 
 BEGIN {
     no warnings 'redefine';
+    *Bugzilla::ldap = \&_bugzilla_ldap;
     *Bugzilla::Auth::Verify::_orig_create_or_update_user
         = \&Bugzilla::Auth::Verify::create_or_update_user;
     *Bugzilla::Auth::Verify::create_or_update_user = \&_create_or_update_user;
@@ -29,7 +31,38 @@ BEGIN {
     *Bugzilla::Group::update = \&_group_update;
     *Bugzilla::Group::_orig_create = \&Bugzilla::Group::create;
     *Bugzilla::Group::create = \&_group_create;
+    *Bugzilla::Group::ldap_dn = sub { $_[0]->{ldap_dn}; }
 };
+
+# From Bugzilla::Auth::Verify::LDAP
+sub _bugzilla_ldap {
+    my $class = shift;
+
+    return $class->request_cache->{ldap}
+        if defined $class->request_cache->{ldap};
+
+    my @servers = split(/[\s,]+/, Bugzilla->params->{"LDAPserver"});
+    ThrowCodeError("ldap_server_not_defined") unless @servers;
+
+    require Net::LDAP;
+    my $ldap;
+    foreach (@servers) {
+        $ldap = new Net::LDAP(trim($_));
+        last if $ldap;
+    }
+    ThrowCodeError("ldap_connect_failed",
+        { server => join(", ", @servers) }) unless $ldap;
+
+    # try to start TLS if needed
+    if (Bugzilla->params->{"LDAPstarttls"}) {
+        my $mesg = $ldap->start_tls();
+        ThrowCodeError("ldap_start_tls_failed", { error => $mesg->error() })
+            if $mesg->code();
+    }
+    $class->request_cache->{ldap} = $ldap;
+
+    return $class->request_cache->{ldap};
+}
 
 sub _create_or_update_user {
     my ($self, $params) = @_;
@@ -57,14 +90,16 @@ sub _create_or_update_user {
 
         my @user_group_ids;
         foreach my $group (@{ $user->groups || [] }) {
-            push @user_group_ids, $group->id if defined $group->{ldap_dn};
+            push @user_group_ids, $group->id if defined $group->ldap_dn;
         }
 
         my ($removed, $added) = diff_arrays(\@user_group_ids, \@$group_ids);
 
-        use Data::Dumper;
-        die Dumper($removed, $added, \@user_group_ids, $group_ids, $user);
-        #XXX
+        $sth_add_mapping->execute($user->id, $_, 0, GRANT_LDAP)
+            foreach @{ $added || [] };
+
+        $sth_remove_mapping->execute($user->id, $_)
+            foreach @{ $removed || [] };
     }
 
     return $result;
@@ -128,9 +163,111 @@ sub object_validators {
 }
 
 sub _check_ldap_dn {
-    my ($invocant, $value, $field, $params) = @_;
-    #TODO(timello): Add DN validation.
-    return $value;
+    my ($invocant, $ldap_dn, undef, $params) = @_;
+    my $ldap = Bugzilla->ldap;
+
+    $ldap_dn = clean_text($ldap_dn);
+
+    # LDAP DN is optional, but we must validate it if it was
+    # passed.
+    return if !$ldap_dn;
+
+    # We just want to check if the dn is valid.
+    # 'filter' can't be empty neither omitted.
+    my $dn_result = $ldap->search(( base   => $ldap_dn,
+                                    scope  => 'sub',
+                                    filter => '1=1' ));
+    if ($dn_result->code) {
+        ThrowUserError('group_ldap_dn_invalid', { ldap_dn => $ldap_dn });
+    }
+
+    # Group LDAP DN already in use.
+    my ($group) = @{ Bugzilla::Group->match({ ldap_dn => $ldap_dn }) || [] };
+    if (defined $group) {
+        ThrowUserError('group_ldap_dn_already_in_use',
+            { ldap_dn => $ldap_dn });
+    }
+
+    return $ldap_dn;
 }
+
+sub group_end_of_create {
+    my ($self, $args) = @_;
+    my $group = $args->{'group'};
+}
+
+sub group_end_of_update {
+    my ($self, $args) = @_;
+    my ($group, $changes) = @$args{qw(group changes)};
+    _sync_ldap($group) if $group->ldap_dn;
+}
+
+sub _sync_ldap {
+    my ($group) = @_;
+    my $dbh  = Bugzilla->dbh;
+    my $ldap = Bugzilla->ldap;
+
+    my $sth_add = $dbh->prepare("INSERT INTO user_group_map
+                                 (user_id, group_id, grant_type, isbless)
+                                 VALUES (?, ?, ?, 0)");
+
+    my $sth_del = $dbh->prepare("DELETE FROM user_group_map
+                                 WHERE user_id = ? AND group_id = ?
+                                 AND grant_type = ? and isbless = 0");
+
+    my $mail_attr = Bugzilla->params->{"LDAPmailattribute"};
+    my $base_dn = Bugzilla->params->{"LDAPBaseDN"};
+
+    # Search for members of the LDAP group.
+    my $filter = "memberof=" . $group->ldap_dn;
+    my @attrs = ($mail_attr);
+    my $dn_result = $ldap->search(( base   => $base_dn,
+                                    scope  => 'sub',
+                                    filter => $filter ), attrs => \@attrs);
+
+    if ($dn_result->code) {
+        ThrowCodeError('ldap_search_error',
+            { errstr => $dn_result->error, username => $group->name });
+    }
+
+    my @group_members;
+    push @group_members, $_->get_value('mail') foreach $dn_result->entries;
+
+    my $users = Bugzilla->dbh->selectall_hashref(
+        "SELECT userid, group_id, login_name
+         FROM profiles
+         LEFT JOIN user_group_map
+                ON user_group_map.user_id = profiles.userid
+                   AND group_id = ?
+                   AND grant_type = ?
+                   AND isbless = 0
+         WHERE extern_id IS NOT NULL", 
+        'userid', undef, ($group->id, GRANT_LDAP));
+
+    my @added;
+    my @removed;
+    foreach my $user (values %$users) {
+        # User is no longer member of the group.
+        if (defined $user->{group_id}
+            and !grep { $_ eq $user->{login_name} } @group_members)
+        {
+            push @removed, $user->{userid};
+        }
+
+        # User has been added to the group.
+        if (!defined $user->{group_id}
+            and grep { $_ eq $user->{login_name} } @group_members)
+        {
+
+            push @added, $user->{userid};
+        }
+    }
+
+    $sth_add->execute($_, $group->id, GRANT_LDAP) foreach @added;
+    $sth_del->execute($_, $group->id, GRANT_LDAP) foreach @removed;
+
+    return { added => \@added, removed => \@removed };
+}
+
 
 __PACKAGE__->NAME;
