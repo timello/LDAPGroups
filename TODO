@@ -1,0 +1,2 @@
+ - Add documentation for the 'LDAP DN' field in the create group page (Bug 842045)
+ - Add updated message for LDAP DN changes (Bug 842068)
