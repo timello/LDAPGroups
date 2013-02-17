@@ -11,10 +11,10 @@ use 5.10.1;
 use strict;
 use parent qw(Bugzilla::Extension);
 
-use Bugzilla::Extension::LDAPGroups::Util;
-
 use Bugzilla::Error qw(ThrowUserError);
 use Bugzilla::Util qw(diff_arrays trim clean_text);
+
+use Scalar::Util qw(blessed);
 
 use constant GRANT_LDAP => 3;
 
@@ -182,8 +182,9 @@ sub _check_ldap_dn {
     }
 
     # Group LDAP DN already in use.
-    my ($group) = @{ Bugzilla::Group->match({ ldap_dn => $ldap_dn }) || [] };
-    if (defined $group) {
+    my ($group) = @{ Bugzilla::Group->match({ ldap_dn => $ldap_dn }) };
+    my $group_id = blessed($invocant) ? $invocant->id : 0;
+    if (defined $group and $group->id != $group_id) {
         ThrowUserError('group_ldap_dn_already_in_use',
             { ldap_dn => $ldap_dn });
     }

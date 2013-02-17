@@ -11,6 +11,5 @@
   The LDAP DN '[% ldap_dn FILTER html %]' is already in use.
 [% ELSIF error == "group_ldap_dn_invalid" %]
   [% title == "Group LDAP DN invalid" %]
-  The LDAP DN '[% ldap_dn FILTER html %] is either invalid
-  or it does not exist.
+  The LDAP DN '[% ldap_dn FILTER html %]' is invalid.
 [% END %]
