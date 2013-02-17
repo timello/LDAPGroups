@@ -1,3 +1,4 @@
  - Add documentation for the 'LDAP DN' field in the create group page (Bug 842045)
  - Add updated message for LDAP DN changes (Bug 842068)
  - Add documentation to the edit user page explaining how LDAP groups will be marked (Bug 842159)
+ - Implement a script (run in a cron job) to sync up groups membership.
