@@ -12,10 +12,13 @@ Bugzilla extension to map Bugzilla and LDAP groups.
 
 ## Important notes
 
-> The extension does not verify if the user is indirect member of a certain group. That means,
+The extension does not verify if the user is indirect member of a certain group. That means,
 the user will be added as member only for those groups he is directly member of.
 
-> The extension has been tested using OpenLDAP with the virtual attribute 'memberOf' enabled. You have to customize the code if it does not reflect your LDIF. Example:
+The extension has been tested using OpenLDAP with the virtual attribute 'memberOf' enabled. You have to customize the code if it does not reflect your LDIF.
+
+Example:
+
     > ldapsearch -x uid=jsmith memberof
     # extended LDIF
     #
