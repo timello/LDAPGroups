@@ -11,7 +11,7 @@ use 5.10.1;
 use strict;
 use parent qw(Bugzilla::Extension);
 
-use Bugzilla::Error qw(ThrowUserError);
+use Bugzilla::Error qw(ThrowUserError ThrowCodeError);
 use Bugzilla::Util qw(diff_arrays trim clean_text);
 
 use Scalar::Util qw(blessed);
