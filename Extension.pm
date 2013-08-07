@@ -14,6 +14,8 @@ use parent qw(Bugzilla::Extension);
 use Bugzilla::Error qw(ThrowUserError ThrowCodeError);
 use Bugzilla::Util qw(diff_arrays trim clean_text);
 
+use Bugzilla::Extension::LDAPGroups::Util qw(sync_ldap);
+
 use Scalar::Util qw(blessed);
 
 use constant GRANT_LDAP => 3;
@@ -200,75 +202,9 @@ sub group_end_of_create {
 sub group_end_of_update {
     my ($self, $args) = @_;
     my ($group, $changes) = @$args{qw(group changes)};
-    _sync_ldap($group) if $group->ldap_dn;
+    sync_ldap($group) if $group->ldap_dn;
 }
 
-sub _sync_ldap {
-    my ($group) = @_;
-    my $dbh  = Bugzilla->dbh;
-    my $ldap = Bugzilla->ldap;
-
-    my $sth_add = $dbh->prepare("INSERT INTO user_group_map
-                                 (user_id, group_id, grant_type, isbless)
-                                 VALUES (?, ?, ?, 0)");
-
-    my $sth_del = $dbh->prepare("DELETE FROM user_group_map
-                                 WHERE user_id = ? AND group_id = ?
-                                 AND grant_type = ? and isbless = 0");
-
-    my $mail_attr = Bugzilla->params->{"LDAPmailattribute"};
-    my $base_dn = Bugzilla->params->{"LDAPBaseDN"};
-
-    # Search for members of the LDAP group.
-    my $filter = "memberof=" . $group->ldap_dn;
-    my @attrs = ($mail_attr);
-    my $dn_result = $ldap->search(( base   => $base_dn,
-                                    scope  => 'sub',
-                                    filter => $filter ), attrs => \@attrs);
-
-    if ($dn_result->code) {
-        ThrowCodeError('ldap_search_error',
-            { errstr => $dn_result->error, username => $group->name });
-    }
-
-    my @group_members;
-    push @group_members, $_->get_value('mail') foreach $dn_result->entries;
-
-    my $users = Bugzilla->dbh->selectall_hashref(
-        "SELECT userid, group_id, login_name
-         FROM profiles
-         LEFT JOIN user_group_map
-                ON user_group_map.user_id = profiles.userid
-                   AND group_id = ?
-                   AND grant_type = ?
-                   AND isbless = 0
-         WHERE extern_id IS NOT NULL", 
-        'userid', undef, ($group->id, GRANT_LDAP));
-
-    my @added;
-    my @removed;
-    foreach my $user (values %$users) {
-        # User is no longer member of the group.
-        if (defined $user->{group_id}
-            and !grep { $_ eq $user->{login_name} } @group_members)
-        {
-            push @removed, $user->{userid};
-        }
-
-        # User has been added to the group.
-        if (!defined $user->{group_id}
-            and grep { $_ eq $user->{login_name} } @group_members)
-        {
-
-            push @added, $user->{userid};
-        }
-    }
-
-    $sth_add->execute($_, $group->id, GRANT_LDAP) foreach @added;
-    $sth_del->execute($_, $group->id, GRANT_LDAP) foreach @removed;
-
-    return { added => \@added, removed => \@removed };
-}
 
 
 __PACKAGE__->NAME;
