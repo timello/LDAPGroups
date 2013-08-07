@@ -18,6 +18,8 @@ use lib qw(. lib);
 use Bugzilla;
 BEGIN { Bugzilla->extensions }
 
+use Bugzilla::Extension::LDAPGroups::Util qw(sync_ldap);
+
 # Get all groups where the ldap_dn has been set
 sub get_groups_using_ldap_dn(){
     my @groups   = Bugzilla::Group->get_all;
@@ -39,7 +41,7 @@ sub main(){
     # For every group that has a ldap_dn update
     # the groups' members according to LDAP
     foreach my $group (@groups){
-        Bugzilla::Extension::LDAPGroups::_sync_ldap($group);
+        sync_ldap($group);
     }
 
     return;
