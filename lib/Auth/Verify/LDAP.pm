@@ -17,6 +17,7 @@ use Net::LDAP::Util qw(escape_filter_value);
 sub check_credentials {
     my ($self, $params) = @_;
     $params = $self->SUPER::check_credentials($params);
+    return $params if $params->{failure};
     my $ldap_group_dns = $self->_ldap_member_of_groups($params->{bz_username});
     $params->{ldap_group_dns} = $ldap_group_dns if scalar @$ldap_group_dns;
     return $params;
