@@ -14,7 +14,7 @@ use parent qw(Bugzilla::Extension);
 use Bugzilla::Error qw(ThrowUserError ThrowCodeError);
 use Bugzilla::Util qw(diff_arrays trim clean_text);
 
-use Bugzilla::Extension::LDAPGroups::Util qw(sync_ldap);
+use Bugzilla::Extension::LDAPGroups::Util qw(sync_ldap bind_ldap_for_search);
 
 use Scalar::Util qw(blessed);
 
@@ -167,6 +167,8 @@ sub object_validators {
 sub _check_ldap_dn {
     my ($invocant, $ldap_dn, undef, $params) = @_;
     my $ldap = Bugzilla->ldap;
+
+    bind_ldap_for_search();
 
     $ldap_dn = clean_text($ldap_dn);
 

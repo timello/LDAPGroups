@@ -11,15 +11,34 @@ use strict;
 use base qw(Exporter);
 our @EXPORT = qw(
   sync_ldap
+  bind_ldap_for_search
 );
 
 use Bugzilla;
 use Bugzilla::Error;
 
+sub bind_ldap_for_search {
+    my $ldap = Bugzilla->ldap;
+    my $bind_result;
+    if (Bugzilla->params->{"LDAPbinddn"}) {
+        my ($LDAPbinddn,$LDAPbindpass) =
+            split(":",Bugzilla->params->{"LDAPbinddn"});
+        $bind_result =
+            $ldap->bind($LDAPbinddn, password => $LDAPbindpass);
+    }
+    else {
+        $bind_result = $ldap->bind();
+    }
+    ThrowCodeError("ldap_bind_failed", {errstr => $bind_result->error})
+        if $bind_result->code;
+}
+
 sub sync_ldap {
     my ($group) = @_;
     my $dbh  = Bugzilla->dbh;
     my $ldap = Bugzilla->ldap;
+
+    bind_ldap_for_search();
 
     my $sth_add = $dbh->prepare("INSERT INTO user_group_map
                                  (user_id, group_id, grant_type, isbless)
@@ -38,7 +57,6 @@ sub sync_ldap {
     my $dn_result = $ldap->search(( base   => $base_dn,
                                     scope  => 'sub',
                                     filter => $filter ), attrs => \@attrs);
-
     if ($dn_result->code) {
         ThrowCodeError('ldap_search_error',
             { errstr => $dn_result->error, username => $group->name });
